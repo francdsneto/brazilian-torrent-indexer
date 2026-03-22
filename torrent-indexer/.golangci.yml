@@ -1,0 +1,4 @@
+issues:
+  exclude-files:
+    - scrape.go
+    - infohash.go

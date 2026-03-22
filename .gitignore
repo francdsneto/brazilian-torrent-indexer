@@ -1,0 +1,44 @@
+# ========================================
+# 1. VOLUMES DOS CONTAINERS (Bancos de Dados, Caches e Downloads)
+# ========================================
+# Ignora completamente os dados gerados pelas aplicações (SQLite, configs, vídeos, etc)
+/comet/data/
+/jackettio/
+/prowlarr/config/
+/rdtclient/data/
+
+# Ignora os arquivos de backup/snapshot do banco de dados em memória do Redis
+*.rdb
+
+# ========================================
+# 2. SEGURANÇA (Chaves de API, Tokens e Senhas)
+# ========================================
+.env
+*.env
+.env.*
+
+# ========================================
+# 3. PROJETO GO (torrent-indexer)
+# ========================================
+# Ignora o arquivo binário compilado pelo Docker (no seu compose o comando é ./app)
+/torrent-indexer/app
+# Ignora as dependências de pacotes do Go caso existam
+/torrent-indexer/vendor/
+# Ignora logs e arquivos de teste do Go
+*.log
+*.test
+*.out
+
+# ========================================
+# 4. PROJETO NODE.JS (torznab-proxy)
+# ========================================
+# Ignora os milhares de arquivos de dependência do Node
+/torznab-proxy/node_modules/
+/torznab-proxy/npm-debug.log*
+/torznab-proxy/yarn-error.log*
+
+# ========================================
+# 5. ARQUIVOS DO SISTEMA OPERACIONAL
+# ========================================
+.DS_Store
+Thumbs.db

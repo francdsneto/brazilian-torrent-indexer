@@ -1,0 +1,149 @@
+package goscrape
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/felipemarinho97/torrent-indexer/cache"
+	"github.com/felipemarinho97/torrent-indexer/logging"
+	"github.com/felipemarinho97/torrent-indexer/monitoring"
+	"github.com/felipemarinho97/torrent-indexer/utils"
+)
+
+type peers struct {
+	Seeders  int `json:"seed"`
+	Leechers int `json:"leech"`
+}
+
+func getPeersFromCache(ctx context.Context, r *cache.Redis, infoHash string) (int, int, error) {
+	// get peers and seeds from redis first
+	peersCache, err := r.Get(ctx, infoHash)
+	if err == nil {
+		var peers peers
+		err = json.Unmarshal(peersCache, &peers)
+		if err != nil {
+			return 0, 0, err
+		}
+		return peers.Leechers, peers.Seeders, nil
+	}
+	return 0, 0, err
+}
+
+func setPeersToCache(ctx context.Context, r *cache.Redis, infoHash string, peer, seed int) error {
+	peers := peers{
+		Seeders:  seed,
+		Leechers: peer,
+	}
+	peersJSON, err := json.Marshal(peers)
+	if err != nil {
+		return err
+	}
+	err = r.SetWithExpiration(ctx, infoHash, peersJSON, 24*time.Hour)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func GetLeechsAndSeeds(ctx context.Context, r *cache.Redis, m *monitoring.Metrics, infoHash string, trackers []string) (int, int, error) {
+	leech, seed, err := getPeersFromCache(ctx, r, infoHash)
+	if err != nil {
+		m.CacheHits.WithLabelValues("peers").Inc()
+		logging.Debug().Str("info_hash", infoHash).Msg("Unable to get peers from cache")
+	} else {
+		m.CacheMisses.WithLabelValues("peers").Inc()
+		logging.Debug().Str("info_hash", infoHash).Int("leech", leech).Int("seed", seed).Msg("Retrieved peers from cache")
+		return leech, seed, nil
+	}
+
+	var peerChan = make(chan peers)
+	var errChan = make(chan error)
+
+	additionalTrackers := getAdditionalTrackers(ctx, r)
+	allTrackers := make([]string, 0, len(trackers)+len(additionalTrackers))
+	allTrackers = append(allTrackers, trackers...)
+	allTrackers = append(allTrackers, additionalTrackers...)
+	allTrackers = utils.StableUniq(allTrackers)
+
+	for _, tracker := range allTrackers {
+		go func(tracker string) {
+			// get peers and seeds from redis first
+			scraper, err := New(tracker)
+			if err != nil {
+				errChan <- err
+				return
+			}
+
+			scraper.SetTimeout(500 * time.Millisecond)
+
+			// get peers and seeds from redis first
+			res, err := scraper.Scrape([]byte(infoHash))
+			if err != nil {
+				errChan <- err
+				return
+			}
+
+			peerChan <- peers{
+				Seeders:  int(res[0].Seeders),
+				Leechers: int(res[0].Leechers),
+			}
+		}(tracker)
+	}
+
+	// prefer the first non-zero response
+	timeout := time.After(500 * time.Millisecond)
+	var fallbackPeer peers
+	hasFallback := false
+	responsesReceived := 0
+
+	for responsesReceived < len(allTrackers) {
+		select {
+		case <-timeout:
+			// Timeout reached, use fallback if available
+			if hasFallback {
+				err = setPeersToCache(ctx, r, infoHash, fallbackPeer.Leechers, fallbackPeer.Seeders)
+				if err != nil {
+					logging.Error().Err(err).Str("info_hash", infoHash).Msg("Failed to cache peer data")
+				} else {
+					logging.Debug().Str("info_hash", infoHash).Int("leech", fallbackPeer.Leechers).Int("seed", fallbackPeer.Seeders).Msg("Retrieved peers from tracker (fallback)")
+				}
+				return fallbackPeer.Leechers, fallbackPeer.Seeders, nil
+			}
+			return 0, 0, fmt.Errorf("unable to get peers from trackers for infohash: %s (timeout)", infoHash)
+		case <-errChan:
+			responsesReceived++
+		case peer := <-peerChan:
+			responsesReceived++
+			// Store the first response as fallback
+			if !hasFallback {
+				fallbackPeer = peer
+				hasFallback = true
+			}
+			// If we get a non-zero response, return immediately
+			if peer.Seeders > 0 {
+				err = setPeersToCache(ctx, r, infoHash, peer.Leechers, peer.Seeders)
+				if err != nil {
+					logging.Error().Err(err).Str("info_hash", infoHash).Msg("Failed to cache peer data")
+				} else {
+					logging.Debug().Str("info_hash", infoHash).Int("leech", peer.Leechers).Int("seed", peer.Seeders).Msg("Retrieved peers from tracker")
+				}
+				return peer.Leechers, peer.Seeders, nil
+			} else if peer.Leechers > 0 {
+				fallbackPeer = peer
+			}
+		}
+	}
+
+	// All trackers responded but none had non-zero peers, use fallback if available
+	if hasFallback {
+		err = setPeersToCache(ctx, r, infoHash, fallbackPeer.Leechers, fallbackPeer.Seeders)
+		if err != nil {
+			logging.Error().Err(err).Str("info_hash", infoHash).Msg("Failed to cache peer data")
+		}
+		return fallbackPeer.Leechers, fallbackPeer.Seeders, nil
+	}
+
+	return 0, 0, fmt.Errorf("unable to get peers from trackers for infohash: %s", infoHash)
+}
