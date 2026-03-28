@@ -87,7 +87,7 @@ func main() {
 	metricsMux := http.NewServeMux()
 
 	indexerMux.HandleFunc("/", handler.HandlerIndex)
-	indexerMux.HandleFunc("/indexers/bludv", indexers.HandlerBluDVIndexer)
+//	indexerMux.HandleFunc("/indexers/bludv", indexers.HandlerBluDVIndexer)
 	indexerMux.HandleFunc("/indexers/comando_torrents", indexers.HandlerComandoIndexer)
 	indexerMux.HandleFunc("/indexers/rede_torrent", indexers.HandlerRedeTorrentIndexer)
 	indexerMux.HandleFunc("/indexers/starck-filmes", indexers.HandlerStarckFilmesIndexer)

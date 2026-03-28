@@ -12,6 +12,41 @@ services:
     ports:
       - 9696:9696
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9696/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Sao_Paulo
+    volumes:
+      - ./radarr/data:/config
+      # O diretório de downloads precisa existir mesmo que seja "fake"
+      - ./data/downloads:/downloads 
+    ports:
+      - 7878:7878
+    restart: unless-stopped
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Sao_Paulo
+    volumes:
+      - ./sonarr/data:/config
+      - ./data/downloads:/downloads
+    ports:
+      - 8989:8989
+    restart: unless-stopped
 
   rdt-client:
     image: rogerfar/rdtclient:latest
@@ -25,54 +60,70 @@ services:
     ports:
       - 6500:6500
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6500 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
 
   flaresolverr:
-    # Em 2026, certifique-se de usar a v3 ou superior, 
-    # pois as anteriores não lidam bem com o Cloudflare Turnstile atual.
     image: flaresolverr/flaresolverr:latest
     container_name: flaresolverr
     environment:
       - LOG_LEVEL=info
       - TZ=America/Sao_Paulo
+      - BROWSER_TIMEOUT=120000
     ports:
       - 8191:8191
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8191 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
-  torrent-indexer:
-    build: ./torrent-indexer
-    container_name: torrent-indexer
-    ports:
-      - 7006:7006
-    environment:
-      - FLARESOLVERR_ADDRESS=http://flaresolverr:8191
-      - FLARESOLVERR_POOL_SIZE=1
-      - FLARESOLVERR_TIMEOUT_SECONDS=60
-      - FALLBACK_TITLE_ENABLED=true
-      - MAGNET_METADATA_API=https://magnet-metadata-api.darklyn.org
-      - CACHE_EXPIRATION=24h
-      # -> Adicione esta linha aqui:
-      - REDIS_HOST=redis-indexer:6379
-    depends_on:
-      - flaresolverr
-      - redis-indexer
-    command: sh -c "sleep 15 && ./app"
-    restart: always
+#  torrent-indexer:
+#    build: ./torrent-indexer
+#    container_name: torrent-indexer
+#    ports:
+#      - 7006:7006
+#    environment:
+#      - FLARESOLVERR_ADDRESS=http://flaresolverr:8191
+#      - FLARESOLVERR_POOL_SIZE=1
+#      - FLARESOLVERR_TIMEOUT_SECONDS=60
+#      - FALLBACK_TITLE_ENABLED=true
+#      - MAGNET_METADATA_API=https://magnet-metadata-api.darklyn.org
+#      - CACHE_EXPIRATION=24h
+#      - REDIS_HOST=redis-indexer
+#      - REDIS_PORT=6379
+#    depends_on:
+#      flaresolverr:
+#        condition: service_healthy
+#      redis-indexer:
+#        condition: service_healthy
+#    command: sh -c "sleep 15 && ./app"
+#    restart: always
 
-  torznab-proxy:
-    build: ./torznab-proxy
-    container_name: torznab-proxy
-    ports:
-      - 7070:7070
-    depends_on:
-      - torrent-indexer
-    restart: unless-stopped
+#  torznab-proxy:
+#    build: ./torznab-proxy
+#    container_name: torznab-proxy
+#    ports:
+#      - 7070:7070
+#    depends_on:
+#      - torrent-indexer
+#    restart: unless-stopped
 
-  redis-indexer:
-    image: redis:alpine
-    container_name: redis-indexer
-    restart: unless-stopped
-    # Comando otimizado para salvar no disco a cada 60s e usar pouca RAM
-    command: redis-server --save 60 1 --loglevel warning
+#  redis-indexer:
+#    image: redis:alpine
+#    container_name: redis-indexer
+#    restart: unless-stopped
+#    command: redis-server --save 60 1 --loglevel warning
+#    healthcheck:
+#      test: ["CMD", "redis-cli", "ping"]
+#      interval: 5s
+#      timeout: 3s
+#      retries: 5
 
   comet:
     image: ghcr.io/g0ldyy/comet:latest
@@ -84,19 +135,68 @@ services:
       - ./comet/data:/app/data
     environment:
       - TZ=America/Sao_Paulo
-      # Configurações do servidor do Comet
       - FASTAPI_HOST=0.0.0.0
       - FASTAPI_PORT=8000
       - FASTAPI_WORKERS=1
-      # Integração com o Prowlarr
       - INDEXER_MANAGER_TYPE=prowlarr
       - INDEXER_MANAGER_URL=http://prowlarr:9696
       - INDEXER_MANAGER_API_KEY=806fba39ea704f458c3a2f75c064e0a5
       - INDEXER_MANAGER_TIMEOUT=20
-      # (Opcional) Se quiser usar todos os indexadores do Prowlarr, deixe a linha abaixo comentada.
-      # Se quiser restringir para usar apenas o seu torrent-indexer, coloque o nome exato dele no Prowlarr:
-      # - INDEXER_MANAGER_INDEXERS=["NomeDoSeuIndexerNoProwlarr"]
-      # Adicione esta linha abaixo:
       - ANIME_MAPPING_ENABLED=False 
     depends_on:
-      - prowlarr
+      prowlarr:
+        condition: service_healthy
+
+  dfindexer:
+    image: ghcr.io/dflexy/dfindexer:latest
+    container_name: dfindexer
+    ports:
+      - 9697:7006
+    environment:
+      - REDIS_HOST=redis-dfindexer
+      - REDIS_PORT=6379
+      - FLARESOLVERR_ADDRESS=http://flaresolverr:8191
+      - FLARESOLVERR_TIMEOUT=120
+      - PORT=7006
+      - LOG_LEVEL=1
+      - LOG_FORMAT=console
+      - TZ=America/Sao_Paulo
+    depends_on:
+      redis-dfindexer:
+        condition: service_healthy
+      flaresolverr:
+        condition: service_healthy
+    restart: unless-stopped
+
+  dfindexer-proxy:
+    build: ./my-middlware-dfindexer-prowlarr
+    container_name: dfindexer-proxy
+    ports:
+      - 7070:7070
+    volumes:
+      - ./my-middlware-dfindexer-prowlarr/data:/app/data
+    environment:
+      - DFINDEXER_URL=http://dfindexer:7006
+      - TZ=America/Sao_Paulo
+    depends_on:
+      dfindexer:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:7070/api?t=caps || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis-dfindexer:
+    image: redis:7
+    container_name: redis-dfindexer
+    volumes:
+      - ./dfindexer/redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

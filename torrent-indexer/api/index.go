@@ -118,7 +118,7 @@ func HandlerIndex(w http.ResponseWriter, r *http.Request) {
 		Build: consts.GetBuildInfo(),
 		IndexerNames: []string{
 			"comando_torrents",
-			"bludv",
+//			"bludv",
 			"torrent-dos-filmes",
 			"filme_torrent",
 			"rede_torrent",

@@ -42,3 +42,23 @@
 # ========================================
 .DS_Store
 Thumbs.db
+
+# ========================================
+# 6. PYTHON (my-middlware-dfindexer-prowlarr)
+# ========================================
+# Ignora arquivos cacheados e compilados do Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignora o banco de dados local e logs do seu proxy
+/my-middlware-dfindexer-prowlarr/data/
+
+# ========================================
+# 7. NOVOS VOLUMES (Radarr, Sonarr, Dfindexer, etc)
+# ========================================
+# Ignora configurações e bancos de dados locais
+/radarr/
+/sonarr/
+/dfindexer/
+/data/
