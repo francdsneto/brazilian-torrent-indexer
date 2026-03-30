@@ -8,7 +8,7 @@ services:
       - TZ=America/Sao_Paulo
       - DOTNET_SYSTEM_NET_HTTP_USESOCKETSHTTPHANDLER=0
     volumes:
-      - ./prowlarr/config:/config
+      - /mnt/rd-indexer/prowlarr-config:/config
     ports:
       - 9696:9696
     restart: unless-stopped
@@ -27,7 +27,7 @@ services:
       - PGID=1000
       - TZ=America/Sao_Paulo
     volumes:
-      - ./radarr/data:/config
+      - /mnt/rd-indexer/radarr-config:/config
       # O diretório de downloads precisa existir mesmo que seja "fake"
       - ./data/downloads:/downloads 
     ports:
@@ -42,7 +42,7 @@ services:
       - PGID=1000
       - TZ=America/Sao_Paulo
     volumes:
-      - ./sonarr/data:/config
+      - /mnt/rd-indexer/sonarr-config:/config
       - ./data/downloads:/downloads
     ports:
       - 8989:8989
@@ -82,6 +82,38 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+
+  zurg:
+    image: ghcr.io/debridmediamanager/zurg-testing:latest
+    container_name: zurg
+    restart: unless-stopped
+    ports:
+      - 9999:9999
+    volumes:
+      # Lendo as configs direto da nova subpasta no seu pendrive
+      - /mnt/rd-indexer/zurg-rclone/zurg-config/config.yml:/app/config.yml
+      - /mnt/rd-indexer/zurg-rclone/zurg-data:/app/data
+
+  rclone:
+    image: rclone/rclone:latest
+    container_name: rclone
+    restart: unless-stopped
+    environment:
+      - TZ=America/Sao_Paulo
+    volumes:
+      - /mnt/realdebrid:/data:shared
+      - /mnt/rd-indexer/zurg-rclone/rclone-config/rclone.conf:/config/rclone/rclone.conf
+      - ./data/rclone-cache:/cache
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    devices:
+      - /dev/fuse:/dev/fuse:rwm
+    # COMANDO OTIMIZADO ABAIXO:
+    command: "mount zurg: /data --allow-other --allow-non-empty --dir-cache-time 10s --vfs-cache-mode full --cache-dir /cache --vfs-cache-max-size 10G --no-checksum --no-modtime --read-only"
+    depends_on:
+      - zurg
 
 #  torrent-indexer:
 #    build: ./torrent-indexer
@@ -174,7 +206,7 @@ services:
     ports:
       - 7070:7070
     volumes:
-      - ./my-middlware-dfindexer-prowlarr/data:/app/data
+      - /mnt/rd-indexer/dfindexer-proxy-data:/app/data
     environment:
       - DFINDEXER_URL=http://dfindexer:7006
       - TZ=America/Sao_Paulo
@@ -193,7 +225,7 @@ services:
     image: redis:7
     container_name: redis-dfindexer
     volumes:
-      - ./dfindexer/redis-data:/data
+      - /mnt/rd-indexer/redis-data:/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
