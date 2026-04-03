@@ -6,6 +6,7 @@
 /jackettio/
 /prowlarr/config/
 /rdtclient/data/
+/app-data/
 
 # Ignora os arquivos de backup/snapshot do banco de dados em memória do Redis
 *.rdb
@@ -44,20 +45,21 @@
 Thumbs.db
 
 # ========================================
-# 6. PYTHON (my-middlware-dfindexer-prowlarr)
+# 6. PYTHON E MIDDLEWARES (my-middlware-dfindexer-prowlarr / btor-sonarr)
 # ========================================
-# Ignora arquivos cacheados e compilados do Python
+# Ignora arquivos cacheados e compilados do Python em qualquer pasta
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Ignora o banco de dados local e logs do seu proxy
+# Ignora o banco de dados local e logs dos proxies específicos
 /my-middlware-dfindexer-prowlarr/data/
+/btor-sonarr-middleware/data/
 
 # ========================================
-# 7. NOVOS VOLUMES (Radarr, Sonarr, Dfindexer, etc)
+# 7. OUTROS VOLUMES E PASTAS ANTIGAS
 # ========================================
-# Ignora configurações e bancos de dados locais
+# Ignora configurações e bancos de dados locais antigos ou na raiz
 /radarr/
 /sonarr/
 /dfindexer/
