@@ -27,7 +27,6 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 conn.execute("PRAGMA journal_mode=WAL")
 cursor = conn.cursor()
 
-# Tabela com suporte a imdb e tmdb, e a chave única composta
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS torrents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,20 +57,38 @@ def hash_magnet(magnet: str):
     return hashlib.sha1(magnet.encode()).hexdigest()
 
 def extract_episodes(files):
-    """Procura por SxxExx ou equivalentes nos arquivos do torrent"""
     episodes =[]
     if not files:
         return episodes
         
     for f in files:
-        # Pega formatos: S01E01, s01e01, 1x01
         match = re.search(r"([Ss]\d{1,2}[EeXx]\d{1,2})", f)
         if match:
             episodes.append(f)
     return episodes
 
+# 🔥 NOVO: filtro inteligente de arquivos
+def is_valid_torrent(files):
+    if not files:
+        return False
+        
+    has_video = False
+    
+    for f in files:
+        f = f.lower()
+        
+        # Confirma que existe pelo menos um formato de vídeo válido
+        if f.endswith((".mkv", ".mp4", ".avi")):
+            has_video = True
+            
+        # Rejeita na hora se achar qualquer arquivo compactado ou imagem de disco
+        if re.search(r"\.(rar|r\d{2}|zip|7z|iso|tar)$", f):
+            return False
+            
+    return has_video
+
 # ========================
-# INGESTÃO DE DADOS (PARSER)
+# INGESTÃO
 # ========================
 def fetch_and_parse_betor():
     print(f"[{datetime.now(TZ).strftime('%H:%M:%S')}] Baixando JSON do BeTor...")
@@ -84,22 +101,26 @@ def fetch_and_parse_betor():
         return
 
     novos_inseridos = 0
+    descartados = 0
     
     for item in data:
-        # Extrai os IDs root
         imdb = str(item.get("imdb_id") or "")
         tmdb = str(item.get("tmdb_id") or "")
         
-        # Pega o nome oficial como Fallback
         info = item.get("info") or {}
         fallback_title = info.get("title") or info.get("name") or info.get("original_title") or "Unknown"
         
-        # O Pulo do Gato: iterar sobre os providers primeiro!
-        for provider in item.get("providers", []):
-            
+        for provider in item.get("providers",[]):
             for torrent in provider.get("torrents",[]):
                 magnet = torrent.get("magnet_uri")
                 if not magnet:
+                    continue
+                
+                files = torrent.get("torrent_files") or[]
+
+                # 🔥 FILTRO PRINCIPAL: Ignora o torrent inteiro se tiver RAR/ZIP
+                if not is_valid_torrent(files):
+                    descartados += 1
                     continue
                     
                 hash_val = hash_magnet(magnet)
@@ -109,18 +130,13 @@ def fetch_and_parse_betor():
                 date = torrent.get("inserted_at") or datetime.utcnow().isoformat()
                 
                 t_name = torrent.get("torrent_name") or fallback_title
-                files = torrent.get("torrent_files") or[]
-                
-                # Tenta extrair episódios dos arquivos
                 episodes = extract_episodes(files)
                 
                 try:
                     if episodes:
-                        # Se for temporada, divide o tamanho total pelos episódios
                         ep_size = int(size / len(episodes)) if size else 0
                         
                         for ep_file in episodes:
-                            # Pega só o nome do arquivo, removendo diretórios
                             clean_title = ep_file.split("/")[-1].split("\\")[-1]
                             
                             cursor.execute("""
@@ -131,7 +147,6 @@ def fetch_and_parse_betor():
                             
                             if cursor.rowcount > 0: novos_inseridos += 1
                     else:
-                        # É um filme ou episódio único
                         cursor.execute("""
                         INSERT OR IGNORE INTO torrents 
                         (title, magnet, hash, size, seeders, leechers, pub_date, imdb, tmdb, created_at)
@@ -141,21 +156,20 @@ def fetch_and_parse_betor():
                         if cursor.rowcount > 0: novos_inseridos += 1
                         
                 except sqlite3.Error:
-                    pass # Ignora erros de constraint (duplicatas)
+                    pass
 
     conn.commit()
-    print(f"[{datetime.now(TZ).strftime('%H:%M:%S')}] Ingestão finalizada! {novos_inseridos} novos torrents/episódios indexados.")
+    print(f"[{datetime.now(TZ).strftime('%H:%M:%S')}] ✔ {novos_inseridos} inseridos | ❌ {descartados} descartados (RAR/lixo)")
 
 # ========================
 # BACKGROUND SCHEDULER
 # ========================
 async def scheduled_scraper_task():
-    """Roda a ingestão assim que o server liga, e depois a cada 12 horas"""
     loop = asyncio.get_running_loop()
     while True:
         await loop.run_in_executor(None, fetch_and_parse_betor)
-        print(f"[{datetime.now(TZ).strftime('%H:%M:%S')}] Aguardando 12 horas para a próxima atualização do BeTor...")
-        await asyncio.sleep(43200) # 12 horas
+        print(f"[{datetime.now(TZ).strftime('%H:%M:%S')}] Aguardando 12h...")
+        await asyncio.sleep(43200)
 
 @app.on_event("startup")
 async def startup_event():
@@ -202,7 +216,7 @@ def generate_rss(items):
     rss = ET.Element("rss", {"version": "2.0", "xmlns:torznab": "http://torznab.com/schemas/2015/feed"})
     channel = ET.SubElement(rss, "channel")
     ET.SubElement(channel, "title").text = "BeTor Proxy"
-    ET.SubElement(channel, "description").text = "Conversor de Season Packs BeTor para Sonarr/Radarr"
+    ET.SubElement(channel, "description").text = "Filtro inteligente anti-RAR"
     ET.SubElement(channel, "link").text = BETOR_JSON_URL
 
     for row in items:
@@ -210,10 +224,7 @@ def generate_rss(items):
         
         item = ET.SubElement(channel, "item")
         ET.SubElement(item, "title").text = title
-        
-        # GUID composto por hash e titulo garante que os episódios explodidos não conflitem no Sonarr
         ET.SubElement(item, "guid", {"isPermaLink": "false"}).text = f"{hash_val}-{title}"
-        
         ET.SubElement(item, "link").text = magnet
         ET.SubElement(item, "size").text = str(size)
         ET.SubElement(item, "enclosure", {"url": magnet, "length": str(size), "type": "application/x-bittorrent"})
@@ -229,6 +240,7 @@ def generate_rss(items):
         ET.SubElement(item, "torznab:attr", {"name": "infohash", "value": hash_val})
         ET.SubElement(item, "torznab:attr", {"name": "magneturl", "value": magnet})
         
+        # RESTAURADO: IDs do IMDB e TMDB cruciais para o Sonarr/Radarr
         if imdb and imdb != "None":
             imdb_id = imdb.replace("tt", "") if imdb.startswith("tt") else imdb
             if imdb_id.strip():
@@ -238,6 +250,7 @@ def generate_rss(items):
             if tmdb.strip():
                 ET.SubElement(item, "torznab:attr", {"name": "tmdbid", "value": tmdb.strip()})
         
+        # RESTAURADO: Categorias cruciais
         ET.SubElement(item, "torznab:attr", {"name": "category", "value": "2000"}) # Filmes
         ET.SubElement(item, "torznab:attr", {"name": "category", "value": "5000"}) # Series
         ET.SubElement(item, "torznab:attr", {"name": "category", "value": "5030"}) # Series SD
@@ -255,10 +268,10 @@ async def torznab(request: Request):
     query_param = request.query_params.get("q")
     query = query_param.lower().strip() if query_param else None
 
-    # O BeTor agora possui IMDB ID e TMDB ID
     imdbid = request.query_params.get("imdbid")
     tmdbid = request.query_params.get("tmdbid")
 
+    # RESTAURADO: Endpoint vital para o Prowlarr reconhecer o indexer
     if t == "caps":
         return Response(content="""<?xml version="1.0" encoding="UTF-8"?>
 <caps>
@@ -285,7 +298,6 @@ async def torznab(request: Request):
     if t in ["search", "tvsearch", "movie"]:
         data = get_from_db(query=query, imdbid=imdbid, tmdbid=tmdbid)
         
-        # Retorna um arquivo fake para bootstrapping se o banco estiver vazio
         if not data and not query and not imdbid and not tmdbid:
             dummy_hash = "1234567890abcdef1234567890abcdef12345678"
             dummy_magnet = f"magnet:?xt=urn:btih:{dummy_hash}&dn=Bootstrapping"

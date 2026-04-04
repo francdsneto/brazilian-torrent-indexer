@@ -17,9 +17,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    depends_on:
-      flaresolverr:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9696/ping || exit 1"]
       interval: 20s
@@ -37,6 +34,7 @@ services:
     volumes:
       - ./app-data/radarr-config:/config
       - ./data/downloads:/downloads 
+      - ./media:/media
       - /mnt/realdebrid:/mnt/realdebrid:rshared 
     ports:
       - 7878:7878
@@ -60,6 +58,7 @@ services:
     volumes:
       - ./app-data/sonarr-config:/config
       - ./data/downloads:/downloads
+      - ./media:/media
       - /mnt/realdebrid:/mnt/realdebrid:rshared
     ports:
       - 8989:8989
@@ -82,6 +81,7 @@ services:
       - TZ=America/Sao_Paulo
     volumes:
       - ./rdtclient/data:/data
+      - ./media:/media
       - /mnt/realdebrid:/mnt/realdebrid:rshared
     ports:
       - 6500:6500
@@ -96,30 +96,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  flaresolverr:
-    image: flaresolverr/flaresolverr:latest
-    container_name: flaresolverr
-    environment:
-      - LOG_LEVEL=info
-      - TZ=America/Sao_Paulo
-      - BROWSER_TIMEOUT=120000
-    ports:
-      - 8191:8191
-    restart: unless-stopped
-    logging: *default-logging
-    # --- CABRESTO DE RECURSOS (Impede de travar o PC) ---
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0' 
-          memory: 1G  
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8191 || exit 1"]
-      interval: 30s
-      timeout: 15s
-      retries: 5
-      start_period: 90s
 
   zurg:
     image: ghcr.io/debridmediamanager/zurg-testing:latest
@@ -147,7 +123,6 @@ services:
     volumes:
       - /mnt/realdebrid:/data:shared
       - ./app-data/zurg-rclone/rclone-config/rclone.conf:/config/rclone/rclone.conf
-      # --- Cache transferido para a Memória RAM (/dev/shm) ---
       - /dev/shm/rclone_cache:/cache
     cap_add:
       - SYS_ADMIN
@@ -155,7 +130,6 @@ services:
       - apparmor:unconfined
     devices:
       - /dev/fuse:/dev/fuse:rwm
-    # --- Cache ajustado com segurança para 1G ---
     command: "mount zurg: /data --allow-other --allow-non-empty --dir-cache-time 10s --vfs-cache-mode writes --vfs-read-chunk-size 32M --vfs-read-chunk-size-limit 1G --buffer-size 64M --no-checksum --no-modtime --vfs-cache-max-age 1h --uid 1000 --gid 1000"
     depends_on:
       zurg:
@@ -190,63 +164,25 @@ services:
       prowlarr:
         condition: service_healthy
 
-  dfindexer:
-    image: ghcr.io/dflexy/dfindexer:latest
-    container_name: dfindexer
-    ports:
-      - 9697:7006
-    environment:
-      - REDIS_HOST=redis-dfindexer
-      - REDIS_PORT=6379
-      - FLARESOLVERR_ADDRESS=http://flaresolverr:8191
-      - FLARESOLVERR_TIMEOUT=120
-      - PORT=7006
-      - LOG_LEVEL=1
-      - LOG_FORMAT=console
-      - TZ=America/Sao_Paulo
-    depends_on:
-      redis-dfindexer:
-        condition: service_healthy
-      flaresolverr:
-        condition: service_healthy
-    logging: *default-logging
-    restart: unless-stopped
-
-  dfindexer-proxy:
-    build: ./my-middlware-dfindexer-prowlarr
-    container_name: dfindexer-proxy
-    ports:
-      - 7070:7070
-    volumes:
-      - ./app-data/dfindexer-proxy-data:/app/data
-    environment:
-      - DFINDEXER_URL=http://dfindexer:7006
-      - TZ=America/Sao_Paulo
-      - TMDB_API_KEY=e82f6fbe5160903a2ff16a0a9687ea9c
-    depends_on:
-      dfindexer:
-        condition: service_started
-    restart: unless-stopped
-    logging: *default-logging
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:7070/api?t=caps || exit 1"]
-      interval: 20s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-
-  redis-dfindexer:
-    image: redis:7
-    container_name: redis-dfindexer
-    volumes:
-      - ./app-data/redis-data:/data
-    restart: unless-stopped
-    logging: *default-logging
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+  # dfindexer-proxy:
+  #   build: ./my-middlware-dfindexer-prowlarr
+  #   container_name: dfindexer-proxy
+  #   ports:
+  #     - 7070:7070
+  #   volumes:
+  #     - /dev/shm/dfindexer-proxy-data:/app/data
+  #   environment:
+  #     - DFINDEXER_URL=http://192.168.1.16:9697
+  #     - TZ=America/Sao_Paulo
+  #     - TMDB_API_KEY=e82f6fbe5160903a2ff16a0a9687ea9c
+  #   restart: unless-stopped
+  #   logging: *default-logging
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -f http://localhost:7070/api?t=caps || exit 1"]
+  #     interval: 20s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 30s
 
   betor-proxy:
     build: ./btor-sonarr-middleware
@@ -265,3 +201,44 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  ts-plex:
+    image: tailscale/tailscale:latest
+    container_name: ts-plex
+    hostname: plex-server-remoto
+    environment:
+      - TS_AUTHKEY=tskey-auth-k3vV9yKBLa11CNTRL-hjiA482J2iUreihbWpqdiUWWFBcXkYsE
+      - TS_STATE_DIR=/var/lib/tailscale
+    volumes:
+      - /home/neto/youtube-dvr/ts-state:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    restart: unless-stopped
+    ports:
+      - "32400:32400"
+
+  plex:
+    image: plexinc/pms-docker
+    container_name: plex
+    restart: unless-stopped
+    network_mode: service:ts-plex
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - PLEX_CLAIM=claim-caKTeot12oPV4AsQysag
+      - TZ=America/Fortaleza
+      - PUID=1000
+      - PGID=1000
+      - ADVERTISE_IP=http://192.168.1.150:32400/
+    volumes:
+      - /home/neto/plex/config:/config
+      - /home/neto/youtube-dvr/downloads:/youtube_videos
+      - /mnt/realdebrid:/mnt/realdebrid:ro,rslave
+      - ./media:/media:ro
+    depends_on:
+      ts-plex:
+        condition: service_started
+      rclone:
+        condition: service_healthy

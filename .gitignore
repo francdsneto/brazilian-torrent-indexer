@@ -7,6 +7,7 @@
 /prowlarr/config/
 /rdtclient/data/
 /app-data/
+/media/
 
 # Ignora os arquivos de backup/snapshot do banco de dados em memória do Redis
 *.rdb
