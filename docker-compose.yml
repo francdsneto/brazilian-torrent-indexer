@@ -234,7 +234,7 @@ services:
       - ADVERTISE_IP=http://192.168.1.150:32400/
     volumes:
       - /home/neto/plex/config:/config
-      - /home/neto/youtube-dvr/downloads:/youtube_videos
+      - /home/neto/youtube-dvr/downloads:/youtube_videos:ro
       - /mnt/realdebrid:/mnt/realdebrid:ro,rslave
       - ./media:/media:ro
     depends_on:
